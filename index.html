@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>深圳湾雪夜</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="canvas-wrap" aria-label="深圳湾建筑剪影，雪花飘落、窗灯亮起，流星划过夜空">
+      <div id="music-caption" class="music-caption" hidden>
+        <span>雪落成灯</span>
+        <span id="music-section">初雪</span>
+      </div>
+      <label id="volume-control" class="volume-control" data-scene-control hidden>
+        <span>音量</span>
+        <input id="music-volume" type="range" min="0" max="100" step="1" value="50" aria-label="配乐音量" />
+        <output id="volume-value" for="music-volume">50%</output>
+      </label>
+      <button id="sound-toggle" class="sound-toggle" type="button" data-scene-control
+        aria-pressed="false" aria-label="播放配乐" title="原创器乐《雪落成灯》，雪花随旋律点亮窗灯">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M11 5 6 9H3v6h3l5 4Z" />
+          <path class="sound-on" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" />
+          <path class="sound-off" d="m16 9 5 6m0-6-5 6" />
+        </svg>
+        <span id="sound-label" aria-live="polite">播放配乐</span>
+      </button>
+    </main>
+    <script src="./score.js"></script>
+    <script src="./assets/piano-samples.js"></script>
+    <script src="./piano.js"></script>
+    <script src="./sound.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+    <script src="./sketch.js"></script>
+  </body>
+</html>
