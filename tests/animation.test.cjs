@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { createHash } = require('node:crypto');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'sketch.js'), 'utf8');
 const style = fs.readFileSync(path.join(__dirname, '..', 'style.css'), 'utf8');
@@ -12,6 +13,7 @@ const style = fs.readFileSync(path.join(__dirname, '..', 'style.css'), 'utf8');
 function loadScene({ fullSetup = false, withScore = false } = {}) {
   let seed = 24;
   const stack = [];
+  const gradients = [];
   const numeric = (...values) => {
     for (const value of values) {
       if (typeof value === 'number') assert.ok(Number.isFinite(value), '绘图参数必须是有限数值');
@@ -19,12 +21,37 @@ function loadScene({ fullSetup = false, withScore = false } = {}) {
   };
   const gradient = (...values) => {
     numeric(...values);
-    return { addColorStop(offset) { assert.ok(offset >= 0 && offset <= 1); } };
+    const stops = [];
+    gradients.push(stops);
+    return {
+      addColorStop(offset, color) {
+        assert.ok(Number.isFinite(offset) && offset >= 0 && offset <= 1, '渐变位置必须在有效范围内');
+        const rgba = /^rgba\((.*)\)$/i.exec(color);
+        if (rgba) {
+          const channels = rgba[1].split(',').map(Number);
+          assert.equal(channels.length, 4, '透明颜色须包含四个数值');
+          assert.ok(channels.every(Number.isFinite), '颜色参数不能出现无效数值');
+          assert.ok(channels[3] >= 0 && channels[3] <= 1, '渐变透明度须在零到一之间');
+        }
+        stops.push({ offset, color });
+      },
+    };
   };
+  const paintKeys = ['globalAlpha', 'filter', 'shadowBlur', 'shadowColor', 'shadowOffsetX',
+    'shadowOffsetY', 'globalCompositeOperation', 'strokeStyle', 'fillStyle', 'lineWidth', 'lineCap'];
   const ctx = {
     globalAlpha: 1,
     filter: 'none',
-    save() { stack.push({ globalAlpha: this.globalAlpha, filter: this.filter }); },
+    shadowBlur: 0,
+    shadowColor: 'rgba(0, 0, 0, 0)',
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    globalCompositeOperation: 'source-over',
+    strokeStyle: '#000000',
+    fillStyle: '#000000',
+    lineWidth: 1,
+    lineCap: 'butt',
+    save() { stack.push(Object.fromEntries(paintKeys.map(key => [key, this[key]]))); },
     restore() { assert.ok(stack.length, '画布状态不能多次恢复'); Object.assign(this, stack.pop()); },
     createLinearGradient: gradient,
     createRadialGradient: gradient,
@@ -33,7 +60,7 @@ function loadScene({ fullSetup = false, withScore = false } = {}) {
     ctx[method] = numeric;
   }
   const sandbox = {
-    Math, Number, assert, drawingContext: ctx, deltaTime: 1000 / 60,
+    Math: Object.create(Math), Number, assert, drawingContext: ctx, deltaTime: 1000 / 60,
     PI: Math.PI, TWO_PI: Math.PI * 2, HALF_PI: Math.PI / 2, ROUND: 'round',
     min: Math.min, max: Math.max, floor: Math.floor, pow: Math.pow, sqrt: Math.sqrt,
     sin: Math.sin, cos: Math.cos, atan2: Math.atan2,
@@ -69,7 +96,8 @@ function loadScene({ fullSetup = false, withScore = false } = {}) {
   return {
     run: (code) => vm.runInContext(code, context),
     snapshot: (code) => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, context)),
-    context, stack, ctx,
+    paintState: () => Object.fromEntries(paintKeys.map(key => [key, ctx[key]])),
+    context, stack, ctx, gradients,
   };
 }
 
@@ -190,6 +218,21 @@ test('只裁底部留白，建筑比例、可见窗户和掉落物种类保留',
   `);
   assert.match(style, /aspect-ratio:\s*5\s*\/\s*6/);
   assert.match(style, /83\.333333vh/);
+});
+
+test('视觉润色保留已提交版本的全部楼体轮廓和窗户坐标', () => {
+  const scene = loadScene();
+  const geometry = scene.snapshot(`({
+    buildings: buildings.map(({ id, outline }) => ({ id, outline })),
+    windows: windows.map(({ buildingId, x, y, w, h }) => ({ buildingId, x, y, w, h })),
+  })`);
+  assert.equal(geometry.buildings.length, 21);
+  assert.equal(geometry.windows.length, 212);
+  // 从优化前已提交的 sketch.js 计算；保留八位小数，忽略平台最末位浮点差异。
+  const canonical = JSON.stringify(geometry, (_key, value) =>
+    typeof value === 'number' ? Math.round(value * 1e8) / 1e8 : value);
+  assert.equal(createHash('sha256').update(canonical).digest('hex'),
+    '6cc7bdebf43e919fe7ace496497f53d3f6773eae02a309abb1d9f2a2e2dfbdeb');
 });
 
 test('落物渐隐与窗灯渐亮重叠，之后保持亮灯并平滑熄灭', () => {
@@ -414,4 +457,75 @@ test('完整绘图调用无异常，淡出不污染后续画面，雾层透明�
     assert.ok(maxAlpha > 0);
   `);
   assert.equal(scene.stack.length, 0);
+});
+
+test('绘图不使用随机数，也不改动落物、雪、窗灯和动画时钟', () => {
+  const scene = loadScene({ fullSetup: true });
+  scene.run(`
+    for (let frame = 0; frame < 20 * 60; frame++) advanceAnimation(1 / 60);
+    nextMeteorAt = sceneTime;
+    updateShootingStar();
+    random = () => assert.fail('绘图不能取随机数，否则不同刷新速度会得到不同画面');
+    Math.random = random;
+  `);
+  const state = `({ sceneTime, animationRemainder, drops, snow, windows,
+    shootingStar, nextDropAt, nextSnowAt, nextMeteorAt })`;
+  for (const offset of [0, 0.22, 0.61, 1.17]) {
+    scene.run(`sceneTime = 20 + ${offset};`);
+    const before = scene.snapshot(state);
+    scene.run(`
+      drawSky();
+      drawShootingStars();
+      drawFog();
+      drawSnow(false);
+      drawCity();
+      drawFallingDrops();
+      drawSnow(true);
+      drawGrain();
+    `);
+    assert.deepEqual(scene.snapshot(state), before);
+    assert.equal(scene.ctx.globalAlpha, 1);
+    assert.equal(scene.ctx.filter, 'none');
+    assert.equal(scene.ctx.shadowBlur, 0);
+    assert.equal(scene.ctx.shadowColor, 'rgba(0, 0, 0, 0)');
+    assert.equal(scene.ctx.globalCompositeOperation, 'source-over');
+    assert.equal(scene.stack.length, 0);
+  }
+  assert.ok(scene.gradients.length > 0, '绘图确实使用了经过透明度检查的渐变');
+});
+
+test('落物从可见到完全消失均恢复画布的透明度、柔光和画笔状态', () => {
+  const scene = loadScene();
+  const before = scene.paintState();
+  for (const opacity of [1, 0.65, 0.17, 0]) {
+    scene.run(`
+      for (const drop of drops) {
+        drop.opacity = ${opacity};
+        drop.trailOpacity = ${opacity};
+      }
+      drawFallingDrops();
+    `);
+    assert.deepEqual(scene.paintState(), before);
+    assert.equal(scene.stack.length, 0);
+  }
+});
+
+test('雾气缓慢变化时保持透明度上限，上下边缘完整淡去', () => {
+  const scene = loadScene();
+  for (const time of [0, 30, 180]) {
+    scene.run(`{
+      sceneTime = ${time};
+      updateFogTexture();
+      let visibleFogPixels = 0;
+      for (let y = 0; y < fogLayer.height; y++) {
+        for (let x = 0; x < fogLayer.width; x++) {
+          const alpha = fogLayer.pixels[(y * fogLayer.width + x) * 4 + 3];
+          assert.ok(alpha <= 34, '雾层不能盖成厚重灰幕');
+          if (y === 0 || y === fogLayer.height - 1) assert.equal(alpha, 0);
+          if (alpha > 0) visibleFogPixels++;
+        }
+      }
+      assert.ok(visibleFogPixels > 0, '雾层不能完全消失');
+    }`);
+  }
 });

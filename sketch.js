@@ -415,21 +415,39 @@ function drawShootingStar(config) {
 }
 
 function drawSky() {
+  push();
   const ctx = drawingContext;
   const gradient = ctx.createLinearGradient(0, 0, 0, H);
   gradient.addColorStop(0, "#2149F2");
-  gradient.addColorStop(0.3, "#1636C5");
-  gradient.addColorStop(0.62, "#0A185E");
+  gradient.addColorStop(0.3, "#173BCB");
+  gradient.addColorStop(0.62, "#0D206C");
   gradient.addColorStop(0.82, "#080B1D");
   gradient.addColorStop(1, "#08090F");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, W, H);
 
-  const glow = ctx.createRadialGradient(W * 0.48, 260, 20, W * 0.48, 260, 560);
-  glow.addColorStop(0, "rgba(48,86,255,0.32)");
+  // 主蓝色不变，光从左上轻轻铺开，避免整片天空像一张平涂色纸。
+  const glow = ctx.createRadialGradient(W * 0.28, 210, 30, W * 0.28, 210, 650);
+  glow.addColorStop(0, "rgba(66,103,255,0.28)");
+  glow.addColorStop(0.5, "rgba(42,78,246,0.12)");
   glow.addColorStop(1, "rgba(8,18,76,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, 820);
+
+  const horizon = ctx.createLinearGradient(0, 540, 0, CITY_BASE_Y);
+  horizon.addColorStop(0, "rgba(49,74,169,0)");
+  horizon.addColorStop(0.62, "rgba(49,74,169,0.12)");
+  horizon.addColorStop(1, "rgba(49,74,169,0)");
+  ctx.fillStyle = horizon;
+  ctx.fillRect(0, 540, W, CITY_BASE_Y - 540);
+
+  // 暗角只作用于楼后的天空，黑色建筑和暖窗不会被压暗。
+  const edge = ctx.createRadialGradient(W * 0.46, 360, 180, W * 0.46, 360, 760);
+  edge.addColorStop(0, "rgba(4,9,39,0)");
+  edge.addColorStop(0.55, "rgba(4,9,39,0.035)");
+  edge.addColorStop(1, "rgba(4,9,39,0.32)");
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, W, H);
 
   noStroke();
   for (let i = 0; i < 40; i++) {
@@ -438,6 +456,7 @@ function drawSky() {
     fill(224, 228, 204, 25 + 18 * sin(sceneTime * 0.72 + i));
     circle(x, y, i % 9 === 0 ? 2 : 1);
   }
+  pop();
 }
 
 function drawFog() {
@@ -453,20 +472,23 @@ function drawFog() {
 }
 
 function updateFogTexture() {
-  // 小尺寸连续噪声缓慢变形，避免椭圆云团和循环归位时的跳动。
+  // 小尺寸连续噪声配合宽窄不一的云带，留出清澈天空，不铺一层灰罩。
   fogLayer.loadPixels();
   const time = sceneTime * 0.018;
   for (let y = 0; y < fogLayer.height; y++) {
-    const edgeFade = pow(sin(PI * y / (fogLayer.height - 1)), 1.5);
+    const height = y / (fogLayer.height - 1);
+    const edgeFade = pow(sin(PI * height), 1.5);
     for (let x = 0; x < fogLayer.width; x++) {
-      const broad = noise(x * 0.026 + time * 0.4, y * 0.038, time);
+      const broad = noise(x * 0.026 + time * 0.4, y * 0.038 - time * 0.12, time);
       const detail = noise(x * 0.064 + 31, y * 0.075 - time * 0.3, time * 0.65);
+      const center = 0.3 + x / fogLayer.width * 0.3 + 0.055 * sin(x * 0.025 + time * 0.3);
+      const ribbon = Math.exp(-(((height - center) / 0.2) ** 2));
       const density = smoothstep(0.34, 0.7, broad * 0.76 + detail * 0.24);
       const index = (y * fogLayer.width + x) * 4;
-      fogLayer.pixels[index] = 83;
+      fogLayer.pixels[index] = 75;
       fogLayer.pixels[index + 1] = 106;
-      fogLayer.pixels[index + 2] = 181;
-      fogLayer.pixels[index + 3] = density * edgeFade * 34;
+      fogLayer.pixels[index + 2] = 218;
+      fogLayer.pixels[index + 3] = density * edgeFade * (8 + ribbon * 26);
     }
   }
   fogLayer.updatePixels();
@@ -503,22 +525,34 @@ function updateSnow(dt) {
 }
 
 function drawSnow(foreground) {
+  push();
+  noStroke();
   for (const flake of snow) {
     if ((flake.depth > 0.58) !== foreground) continue;
     const edgeFade = smoothstep(-16, 32, flake.y) * (1 - smoothstep(H - 45, H + 10, flake.y));
-    noStroke();
-    fill(224, 230, 244, (30 + flake.depth * 105) * edgeFade);
-    circle(flake.x, flake.y, flake.size);
+    const softness = smoothstep(0.8, 1, flake.depth);
+    const alpha = (24 + flake.depth * 106) * edgeFade;
+    const ctx = drawingContext;
+    push();
+    // 只让极少数最近的雪点轻微虚化，远雪仍细小，主旋律雪花仍清晰。
+    if (softness > 0) ctx.filter = `blur(${(softness * 0.85).toFixed(3)}px)`;
+    fill(224, 233, 249, alpha);
+    circle(flake.x, flake.y, flake.size * (1 + softness * 0.16));
+    pop();
   }
+  pop();
 }
 
 function drawCity() {
+  push();
   for (const building of buildings) {
     drawBuilding(building);
     drawWindows(building.windows);
   }
+  noStroke();
   fill(INK);
   rect(0, CITY_BASE_Y, W, H - CITY_BASE_Y);
+  pop();
 }
 
 function traceRoadPath(ctx) {
@@ -750,6 +784,12 @@ function drawBuilding(building) {
   noFill();
   strokeWeight(0.65);
   stroke(76, 80, 96, 34);
+  const detailStrength = [0.105, 0.135, 0.15][building.depth];
+  const structure = ctx.createLinearGradient(x, top, x, base);
+  structure.addColorStop(0, `rgba(98,116,160,${detailStrength})`);
+  structure.addColorStop(0.42, `rgba(98,116,160,${detailStrength * 0.6})`);
+  structure.addColorStop(1, "rgba(98,116,160,0)");
+  ctx.strokeStyle = structure;
 
   if (building.style === "springBamboo") {
     // 内部结构直接沿已经绘出的边线取样，始终在楼体内。
@@ -800,10 +840,22 @@ function drawBuilding(building) {
   }
 
   if (building.seam !== undefined) {
-    stroke(97, 101, 117, 23);
+    ctx.save();
+    ctx.globalAlpha *= 0.62;
     const seamX = x + w * building.seam;
     line(seamX, top, seamX, base);
+    ctx.restore();
   }
+
+  // 统一黑色楼体，仅在楼冠内侧留一丝天空反光，往下消失；不是整栋描边。
+  const rim = ctx.createLinearGradient(0, top, 0, min(base, top + 105));
+  rim.addColorStop(0, "rgba(114,139,200,0.22)");
+  rim.addColorStop(0.35, "rgba(96,120,175,0.07)");
+  rim.addColorStop(1, "rgba(96,120,175,0)");
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = 1.25;
+  traceBuildingOutline(ctx, building);
+  ctx.stroke();
   pop();
 }
 
@@ -850,17 +902,25 @@ function drawWindows(buildingWindows) {
     const depthFactor = [0.82, 0.91, 1][win.depth];
     const centerX = win.x + win.w / 2;
     const centerY = win.y + win.h / 2;
-    const radius = 7 + win.light * 5;
-    ctx.save();
+    // 用坐标给每扇窗少量固定色温差，不消耗动画的随机数，也不改变落点。
+    const warmth = (Math.floor(win.x * 7 + win.y * 11) % 9) / 8;
+    const radius = 8 + win.light * 6 + win.flash * 2;
+    const halo = (win.light * 0.075 + win.flash * 0.13) * depthFactor;
+    const intensity = pow(win.light, 0.72) * depthFactor;
+    push();
     const glow = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
-    glow.addColorStop(0, `rgba(255,237,176,${win.light * 0.055 + win.flash * 0.12})`);
-    glow.addColorStop(1, "rgba(255,237,176,0)");
+    glow.addColorStop(0, `rgba(255,226,159,${halo})`);
+    glow.addColorStop(0.35, `rgba(255,226,159,${halo * 0.35})`);
+    glow.addColorStop(1, "rgba(255,226,159,0)");
     ctx.fillStyle = glow;
     ctx.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
-    ctx.restore();
     // 亮度接近零时也连续淡去，不再跨过阈值突然熄灭。
-    fill(247, 242, 199, 255 * pow(win.light, 0.72) * depthFactor);
+    fill(255, 224 + warmth * 14, 166 + warmth * 27, 255 * intensity);
     rect(win.x, win.y, win.w, win.h, 0.6);
+    // 亮芯留在窗内，窗外只保留很轻的暖晕，不给楼体罩上大光斑。
+    fill(255, 249, 219 + warmth * 12, 205 * intensity);
+    rect(win.x + win.w * 0.2, win.y + 0.6, win.w * 0.6, win.h * 0.5, 0.35);
+    pop();
   }
   pop();
 }
@@ -996,11 +1056,11 @@ function drawDropTrail(drop) {
   const ctx = drawingContext;
   ctx.save();
   const trail = ctx.createLinearGradient(drop.x, topY, drop.x, endY);
-  trail.addColorStop(0, "rgba(246,239,192,0)");
-  trail.addColorStop(0.3, `rgba(246,239,192,${0.065 * drop.trailOpacity})`);
-  trail.addColorStop(1, `rgba(246,239,192,${0.24 * drop.trailOpacity})`);
+  trail.addColorStop(0, "rgba(229,236,251,0)");
+  trail.addColorStop(0.3, `rgba(229,236,251,${0.05 * drop.trailOpacity})`);
+  trail.addColorStop(1, `rgba(240,242,219,${0.21 * drop.trailOpacity})`);
   ctx.strokeStyle = trail;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 0.85;
   ctx.beginPath();
   ctx.moveTo(drop.x, topY);
   ctx.lineTo(drop.x, endY);
@@ -1009,8 +1069,14 @@ function drawDropTrail(drop) {
 }
 
 function drawDropIcon(drop) {
+  if (drop.opacity <= 0) return;
   push();
-  drawingContext.globalAlpha *= drop.opacity * (drop.brightness ?? 1);
+  // 每片雪花自身明暗起伏，不加放射光线；不同落点错开呼吸，避免整屏同闪。
+  const phase = drop.x * 0.037 + drop.landingY * 0.011;
+  const shimmer = pow(0.5 + 0.5 * sin(drop.fallAge * 2.15 + phase), 4);
+  drawingContext.globalAlpha *= drop.opacity * (drop.brightness ?? 1) * (0.74 + shimmer * 0.26);
+  drawingContext.shadowColor = "rgba(255,243,195,0.6)";
+  drawingContext.shadowBlur = 2 + shimmer * 4;
   translate(drop.x, drop.y);
   rotate(drop.rotation);
   scale(0.84 + drop.opacity * 0.16);
