@@ -54,8 +54,7 @@ const BUILDING_SPECS = [
   { id: "waterfront-podium", x: 649, w: 120, top: 727, depth: 2,
     roof: [[0, 8], [0.23, 8], [0.23, 0], [0.7, 0], [0.7, 4], [1, 4]], noWindows: true },
   { id: "sports-roof", x: 916, w: 227, top: 716, depth: 2, style: "sportsRoof", noWindows: true },
-].map((spec) => ({
-  ...spec,
+].map((spec) => Object.assign({}, spec, {
   x: spec.x * SKYLINE_SCALE,
   w: spec.w * SKYLINE_SCALE,
   top: CITY_BASE_Y + (spec.top - 770) * SKYLINE_SCALE,
@@ -71,7 +70,6 @@ const BAMBOO_PROFILE = [
 let buildings = [];
 let windows = [];
 let drops = [];
-let bursts = [];
 let snow = [];
 let grainLayer;
 let fogLayer;
@@ -117,8 +115,8 @@ function setup() {
 
 function makeCity() {
   windows = [];
-  buildings = BUILDING_SPECS.map((spec) => ({
-    ...spec, outline: makeBuildingOutline(spec), windows: [], lastDropAt: -Infinity,
+  buildings = BUILDING_SPECS.map((spec) => Object.assign({}, spec, {
+    outline: makeBuildingOutline(spec), windows: [], lastDropAt: -Infinity,
   })).sort((a, b) => a.depth - b.depth);
 
   buildings.forEach((building, buildingIndex) => {
@@ -292,8 +290,9 @@ function advanceAnimation(elapsedSeconds) {
 }
 
 function syncMusicDrops() {
-  const transport = globalThis.cityScore ? globalThis.cityAudio?.transport?.() : null;
-  if ((transport?.session ?? null) !== (musicTransport?.session ?? null)) {
+  const transport = globalThis.cityScore && globalThis.cityAudio && globalThis.cityAudio.transport
+    ? globalThis.cityAudio.transport() : null;
+  if ((transport ? transport.session : null) !== (musicTransport ? musicTransport.session : null)) {
     // 开关配乐时让旧落物轻轻隐去，既不突然清屏，也不留下抢拍的落点。
     for (const drop of drops) {
       if (drop.phase === "retiring") continue;
@@ -309,14 +308,15 @@ function syncMusicDrops() {
   musicTransport = transport;
   if (!transport || transport.time < 0) return;
   const score = globalThis.cityScore;
-  const cycle = Math.floor(transport.time / score.duration);
+  const cycleDuration = transport.duration == null ? score.duration : transport.duration;
+  const cycle = Math.floor(transport.time / cycleDuration);
   for (const [key, landedAt] of musicDropEvents) {
     if (landedAt < transport.time - 1) musicDropEvents.delete(key);
   }
   // 下一轮的首句需要提前落下，循环接缝才不会让音符先响、雪花后到。
   for (let lap = Math.max(0, cycle - 1); lap <= cycle + 1; lap++) {
     for (const note of score.visuals) {
-      const landedAt = lap * score.duration + note.at;
+      const landedAt = lap * cycleDuration + note.at;
       // 开场便有旋律：首批雪花已在半空，不把完整飞行挤进不足一秒。
       const startedAt = landedAt - note.visual.flight;
       if (transport.time < startedAt || transport.time > landedAt + DROP_MERGE_SECONDS) continue;
@@ -349,6 +349,13 @@ function chooseMusicTarget(position) {
 function snowfallStrength() {
   if (musicTransport) {
     const score = globalThis.cityScore;
+    if (score.sections[0].from !== undefined) {
+      const time = max(0, musicTransport.time) % (musicTransport.duration == null ? score.duration : musicTransport.duration);
+      const index = Math.max(0, score.sections.findIndex(part => time >= part.from && time < part.to));
+      const section = score.sections[index];
+      return lerp(score.sections[(index + score.sections.length - 1) % score.sections.length].intensity,
+        section.intensity, smoothstep(0, 1.8, time - section.from));
+    }
     const bar = max(0, musicTransport.time) % score.duration / (score.beatSeconds * 4);
     const index = Math.floor(bar / 8);
     return lerp(score.sections[(index + 3) % 4].intensity, score.sections[index].intensity,
@@ -372,7 +379,7 @@ function updateShootingStar() {
       travelY: random(235, 360),
       length: random(135, 180),
     };
-    globalThis.cityAudio?.meteor({
+    if (globalThis.cityAudio) globalThis.cityAudio.meteor({
       duration: shootingStar.duration,
       entry: (shootingStar.startX - W) / -shootingStar.travelX,
       exit: shootingStar.startX / -shootingStar.travelX,
@@ -555,207 +562,6 @@ function drawCity() {
   pop();
 }
 
-function traceRoadPath(ctx) {
-  ctx.beginPath();
-  ctx.moveTo(315, H);
-  ctx.bezierCurveTo(560, 1118, 354, 1040, 442, 986);
-  ctx.bezierCurveTo(492, 952, 468, 922, 455, CITY_BASE_Y);
-  ctx.lineTo(475, CITY_BASE_Y);
-  ctx.bezierCurveTo(505, 926, 536, 956, 486, 996);
-  ctx.bezierCurveTo(420, 1048, 675, 1120, 628, H);
-  ctx.closePath();
-}
-
-function updateAndDrawRoadSnow() {
-  snowCoverage = min(1, snowCoverage + deltaTime / 90000);
-  if (snowCoverage < 0.006) return;
-
-  const ctx = drawingContext;
-  ctx.save();
-  traceRoadPath(ctx);
-  ctx.clip();
-
-  const baseAlpha = pow(snowCoverage, 0.9) * 0.46;
-  const snowGradient = ctx.createLinearGradient(0, CITY_BASE_Y, 0, H);
-  snowGradient.addColorStop(0, `rgba(176,190,224,${baseAlpha * 0.52})`);
-  snowGradient.addColorStop(1, `rgba(218,224,235,${baseAlpha})`);
-  ctx.fillStyle = snowGradient;
-  ctx.fillRect(0, CITY_BASE_Y, W, H - CITY_BASE_Y);
-
-  noStroke();
-  for (let i = 0; i < 150; i++) {
-    const appearAt = ((i * 43) % 149) / 149;
-    if (snowCoverage < appearAt) continue;
-    const x = (i * 197 + 61) % W;
-    const y = CITY_BASE_Y + ((i * 83 + 29) % (H - CITY_BASE_Y));
-    const patchGrowth = constrain((snowCoverage - appearAt) * 7, 0, 1);
-    fill(224, 231, 242, 22 + patchGrowth * 46);
-    ellipse(x, y, (8 + (i % 7) * 4) * patchGrowth, (2.5 + (i % 4) * 1.4) * patchGrowth);
-  }
-  ctx.restore();
-}
-
-function drawLitRoadPatch(lamp) {
-  const ctx = drawingContext;
-  const radius = lamp.size * 7.4;
-  ctx.save();
-  traceRoadPath(ctx);
-  ctx.clip();
-  const light = ctx.createRadialGradient(lamp.x, lamp.y, 0, lamp.x, lamp.y, radius);
-  light.addColorStop(0, `rgba(119,116,126,${0.5 * lamp.growth})`);
-  light.addColorStop(0.42, `rgba(76,78,102,${0.34 * lamp.growth})`);
-  light.addColorStop(1, "rgba(25,28,52,0)");
-  ctx.fillStyle = light;
-  ctx.fillRect(lamp.x - radius, lamp.y - radius, radius * 2, radius * 2);
-  ctx.restore();
-}
-
-function roadCenterPoint(progress) {
-  const t = constrain(progress, 0, 1);
-  if (t < 0.56) {
-    const p = t / 0.56;
-    return {
-      x: cubicPoint(470, 610, 350, 460, p),
-      y: cubicPoint(1218, 1128, 1050, 990, p),
-    };
-  }
-  const p = (t - 0.56) / 0.44;
-  return {
-    x: cubicPoint(460, 530, 455, 465, p),
-    y: cubicPoint(990, 956, 920, CITY_BASE_Y, p),
-  };
-}
-
-function cubicPoint(a, b, c, d, t) {
-  const inverse = 1 - t;
-  return inverse * inverse * inverse * a +
-    3 * inverse * inverse * t * b +
-    3 * inverse * t * t * c +
-    t * t * t * d;
-}
-
-function updateAndDrawCar() {
-  const dt = min(deltaTime / 16.667, 2);
-
-  if (carEvent.phase === "waiting") {
-    if (millis() >= carEvent.nextStart) {
-      carEvent.phase = "dropping";
-      carEvent.y = -45;
-      carEvent.startProgress = random(0.04, 0.7);
-      carEvent.landing = roadCenterPoint(carEvent.startProgress);
-      carEvent.dropX = carEvent.landing.x;
-    }
-    return;
-  }
-
-  if (carEvent.phase === "dropping") {
-    carEvent.y += 5.2 * dt;
-    drawFallingCar(carEvent.dropX, carEvent.y);
-    if (carEvent.y >= carEvent.landing.y) {
-      carEvent.phase = "driving";
-      carEvent.progress = carEvent.startProgress;
-      bursts.push({ x: carEvent.dropX, y: carEvent.landing.y, radius: 4, alpha: 170 });
-    }
-    return;
-  }
-
-  carEvent.progress += dt / 430;
-  const position = roadCenterPoint(carEvent.progress);
-  const next = roadCenterPoint(carEvent.progress + 0.012);
-  drawCarHeadlights(position, next, carEvent.progress);
-  drawDrivingCar(position, next, carEvent.progress);
-
-  if (carEvent.progress >= 1) {
-    carEvent.phase = "waiting";
-    carEvent.nextStart = millis() + random(4200, 7200);
-  }
-}
-
-function drawCarHeadlights(position, next, progress) {
-  const dx = next.x - position.x;
-  const dy = next.y - position.y;
-  const distance = max(0.001, sqrt(dx * dx + dy * dy));
-  const forwardX = dx / distance;
-  const forwardY = dy / distance;
-  const sideX = -forwardY;
-  const sideY = forwardX;
-  const carScale = lerp(1, 0.2, progress);
-  const beamLength = lerp(128, 42, progress);
-  const beamWidth = lerp(46, 15, progress);
-  const fade = 1 - smoothstep(0.88, 1, progress);
-  const ctx = drawingContext;
-  ctx.save();
-  ctx.globalCompositeOperation = "screen";
-
-  for (const side of [-1, 1]) {
-    const originX = position.x + forwardX * 16 * carScale + sideX * 5.5 * carScale * side;
-    const originY = position.y + forwardY * 16 * carScale + sideY * 5.5 * carScale * side;
-    const endX = originX + forwardX * beamLength;
-    const endY = originY + forwardY * beamLength;
-    const halfWidth = beamWidth * 0.5;
-    const beam = ctx.createLinearGradient(originX, originY, endX, endY);
-    beam.addColorStop(0, `rgba(255,247,207,${0.48 * fade})`);
-    beam.addColorStop(0.46, `rgba(244,236,194,${0.2 * fade})`);
-    beam.addColorStop(0.78, `rgba(197,204,188,${0.06 * fade})`);
-    beam.addColorStop(1, "rgba(215,218,198,0)");
-    ctx.fillStyle = beam;
-    ctx.beginPath();
-    ctx.moveTo(originX, originY);
-    ctx.lineTo(endX + sideX * halfWidth, endY + sideY * halfWidth);
-    ctx.lineTo(endX - sideX * halfWidth, endY - sideY * halfWidth);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function drawFallingCar(x, y) {
-  push();
-  translate(x, y);
-  drawingContext.save();
-  drawingContext.shadowBlur = 12;
-  drawingContext.shadowColor = "rgba(255,235,169,0.9)";
-  fill(PAPER);
-  noStroke();
-  rect(-9, -4, 18, 9, 2.5);
-  beginShape();
-  vertex(-5, -4);
-  vertex(-2, -9);
-  vertex(5, -9);
-  vertex(8, -4);
-  endShape(CLOSE);
-  fill(15, 18, 31);
-  circle(-5, 6, 4);
-  circle(5, 6, 4);
-  drawingContext.restore();
-  pop();
-}
-
-function drawDrivingCar(position, next, progress) {
-  const angle = atan2(next.y - position.y, next.x - position.x);
-  const scaleAmount = lerp(1, 0.2, progress);
-  const fade = 1 - smoothstep(0.88, 1, progress);
-  push();
-  translate(position.x, position.y);
-  rotate(angle + HALF_PI);
-  scale(scaleAmount);
-  noStroke();
-  fill(20, 29, 69, 245 * fade);
-  rect(-10, -17, 20, 34, 6);
-  fill(117, 144, 222, 180 * fade);
-  rect(-7, -8, 14, 12, 3);
-  fill(255, 239, 174, 245 * fade);
-  circle(-6, -15, 4.5);
-  circle(6, -15, 4.5);
-  drawingContext.save();
-  drawingContext.shadowBlur = 5;
-  drawingContext.shadowColor = "rgba(239,55,48,0.8)";
-  fill(224, 62, 59, 210 * fade);
-  circle(-6, 14, 3.5);
-  circle(6, 14, 3.5);
-  drawingContext.restore();
-  pop();
-}
 
 function smoothstep(edge0, edge1, value) {
   const amount = constrain((value - edge0) / (edge1 - edge0), 0, 1);
@@ -868,7 +674,7 @@ function startWindowLight(win, startedAt, kind = "snowflake") {
     hold: random(10, 24),
     fade: random(14, 26),
   };
-  globalThis.cityAudio?.windowLight(win.x / W, win.y / H, kind);
+  if (globalThis.cityAudio) globalThis.cityAudio.windowLight(win.x / W, win.y / H, kind);
 }
 
 function updateWindows() {
@@ -966,12 +772,12 @@ function createDrop(target = null, speed = random(115, 180), profile = null) {
     startY,
     landingY,
     target,
-    kind: profile?.kind ?? chooseDropKind(),
-    size: profile?.size ?? random(6, 9),
-    brightness: profile?.brightness ?? 1,
+    kind: profile && profile.kind != null ? profile.kind : chooseDropKind(),
+    size: profile && profile.size != null ? profile.size : random(6, 9),
+    brightness: profile && profile.brightness != null ? profile.brightness : 1,
     speed,
     rotation: random(TWO_PI),
-    turn: profile?.turn ?? random(-0.6, 0.6),
+    turn: profile && profile.turn != null ? profile.turn : random(-0.6, 0.6),
     trailLength: random(130, 205),
     phase: "falling",
     fallAge: 0,
@@ -1033,7 +839,7 @@ function updateFallingDrops(dt, musicOnly = false) {
         drops.splice(i, 1);
       }
     }
-    if (drop.music?.startedAt < 0 && drop.phase === "falling") {
+    if (drop.music && drop.music.startedAt < 0 && drop.phase === "falling") {
       const entrance = smoothstep(0, 0.18, musicTransport.time);
       drop.opacity = entrance;
       drop.trailOpacity = entrance;
@@ -1074,7 +880,7 @@ function drawDropIcon(drop) {
   // 每片雪花自身明暗起伏，不加放射光线；不同落点错开呼吸，避免整屏同闪。
   const phase = drop.x * 0.037 + drop.landingY * 0.011;
   const shimmer = pow(0.5 + 0.5 * sin(drop.fallAge * 2.15 + phase), 4);
-  drawingContext.globalAlpha *= drop.opacity * (drop.brightness ?? 1) * (0.74 + shimmer * 0.26);
+  drawingContext.globalAlpha *= drop.opacity * (drop.brightness == null ? 1 : drop.brightness) * (0.74 + shimmer * 0.26);
   drawingContext.shadowColor = "rgba(255,243,195,0.6)";
   drawingContext.shadowBlur = 2 + shimmer * 4;
   translate(drop.x, drop.y);
@@ -1111,84 +917,6 @@ function drawSnowCrystal(size) {
   noStroke();
 }
 
-function drawFallingMushroom(size) {
-  fill(PAPER);
-  noStroke();
-  arc(0, 0, size * 2.2, size * 1.55, PI, TWO_PI, CHORD);
-  rect(-size * 0.25, -0.2, size * 0.5, size * 0.95, size * 0.2);
-  fill(19, 27, 65, 150);
-  circle(-size * 0.42, -size * 0.3, size * 0.24);
-  circle(size * 0.34, -size * 0.38, size * 0.18);
-}
-
-function drawMushroomLamps() {
-  for (const lamp of mushroomLamps) drawLitRoadPatch(lamp);
-
-  for (const lamp of mushroomLamps) {
-    lamp.growth = min(1, lamp.growth + 0.035);
-    lamp.flash *= 0.94;
-    const scaleAmount = easeOutBack(lamp.growth);
-    const pulse = 0.88 + sin(frameCount * 0.025 + lamp.phase) * 0.08;
-    const shadeDiameter = lamp.size * 2.7;
-    const poleHeight = lamp.size * 4.35;
-    const poleWidth = max(2.2, lamp.size * 0.16);
-
-    push();
-    translate(lamp.x, lamp.y);
-    scale(scaleAmount);
-
-    noStroke();
-    fill(255, 210, 103, 18 + lamp.flash * 22);
-    ellipse(0, 2, lamp.size * 5.4, lamp.size * 1.3);
-
-    fill(19, 18, 25, 245);
-    rect(-poleWidth / 2, -poleHeight, poleWidth, poleHeight, poleWidth * 0.2);
-    rect(-poleWidth * 0.85, -2, poleWidth * 1.7, 4, 0.8);
-
-    const poleGlow = drawingContext.createLinearGradient(0, -poleHeight, 0, 0);
-    poleGlow.addColorStop(0, "rgba(255,196,76,0.95)");
-    poleGlow.addColorStop(0.5, "rgba(206,125,42,0.78)");
-    poleGlow.addColorStop(0.72, "rgba(60,43,35,0.28)");
-    poleGlow.addColorStop(1, "rgba(12,12,18,0)");
-    drawingContext.fillStyle = poleGlow;
-    drawingContext.fillRect(-poleWidth / 2, -poleHeight, poleWidth, poleHeight);
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 24 + pulse * 18 + lamp.flash * 14;
-    drawingContext.shadowColor = "rgba(255,207,88,0.92)";
-    fill(255, 224, 139, 245);
-    arc(0, -poleHeight, shadeDiameter, shadeDiameter, PI, TWO_PI, CHORD);
-    drawingContext.restore();
-
-    fill(255, 232, 161, 248);
-    arc(0, -poleHeight, shadeDiameter, shadeDiameter, PI, TWO_PI, CHORD);
-    stroke(255, 241, 188, 160);
-    strokeWeight(max(0.6, lamp.size * 0.035));
-    line(-shadeDiameter / 2, -poleHeight, shadeDiameter / 2, -poleHeight);
-    noStroke();
-    pop();
-  }
-}
-
-function easeOutBack(value) {
-  const c1 = 1.70158;
-  const c3 = c1 + 1;
-  return 1 + c3 * pow(value - 1, 3) + c1 * pow(value - 1, 2);
-}
-
-function drawBursts() {
-  for (let i = bursts.length - 1; i >= 0; i--) {
-    const burst = bursts[i];
-    burst.radius += 0.9;
-    burst.alpha -= 7;
-    noFill();
-    stroke(247, 242, 199, burst.alpha);
-    strokeWeight(1);
-    circle(burst.x, burst.y, burst.radius * 2);
-    if (burst.alpha <= 0) bursts.splice(i, 1);
-  }
-  noStroke();
-}
 
 function drawGrain() {
   tint(255, 88);
@@ -1197,7 +925,7 @@ function drawGrain() {
 }
 
 function mousePressed(event) {
-  if (event?.target?.closest?.("[data-scene-control]")) return;
+  if (event && event.target && event.target.closest && event.target.closest("[data-scene-control]")) return;
   if (musicTransport) return;
   let target = null;
   let nearest = 42;

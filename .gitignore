@@ -1,0 +1,6 @@
+# 本地小红书打包指南、校验工具和交付包不进入仓库。
+/.codex/
+/dist/
+/releases/
+.DS_Store
+*.log

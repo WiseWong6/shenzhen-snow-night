@@ -89,7 +89,7 @@ function loadScene({ fullSetup = false, withScore = false } = {}) {
     'rect', 'circle', 'line', 'translate', 'rotate', 'scale', 'beginShape', 'vertex', 'endShape',
     'image', 'tint', 'noTint']) sandbox[method] = numeric;
   const context = vm.createContext(sandbox);
-  if (withScore) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'score.js'), 'utf8'), context);
+  if (withScore) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'assets/jrpg-track.js'), 'utf8'), context);
   vm.runInContext(source, context);
   if (!fullSetup) vm.runInContext('makeGrain = () => {};', context);
   vm.runInContext('setup();', context);
@@ -183,10 +183,10 @@ test('开场雪花预先位于半空，第一拍点窗且保持正常飞行速�
     };
     advanceAnimation(1 / 60);
     assert.equal(arrivals, 0);
-    audioTime = 0;
+    audioTime = cityScore.visuals[0].at;
     advanceAnimation(1 / 60);
     assert.equal(arrivals, 1);
-    const first = drops.find(drop => drop.music?.key === '0:melody-0-0');
+    const first = drops.find(drop => drop.music?.key === '0:' + cityScore.visuals[0].id);
     assert.equal(first.phase, 'merging');
     assert.equal(first.y, first.landingY);
     const falling = drops.filter(drop => drop.music && drop.phase === 'falling');
@@ -267,7 +267,6 @@ test('落物渐隐与窗灯渐亮重叠，之后保持亮灯并平滑熄灭', ()
     assert.ok(overlappingFrames > 20);
     assert.equal(drops.length, 0);
     assert.equal(target.reserved, false);
-    assert.equal(bursts.length, 0);
     const envelope = target.illumination;
     sceneTime = envelope.startedAt + envelope.rise + envelope.hold / 2;
     updateWindows();
@@ -411,7 +410,7 @@ test('连续运行五分钟：数量受控、无落点泄漏，流星单颗完�
         lastMeteor = shootingStar;
       }
     }
-    return { maxDrops, maxSnow, minStrength, maxStrength, meteors, bursts: bursts.length };
+    return { maxDrops, maxSnow, minStrength, maxStrength, meteors };
   })()`);
   assert.ok(result.maxDrops <= 32);
   assert.ok(result.maxSnow <= 180);
@@ -419,7 +418,6 @@ test('连续运行五分钟：数量受控、无落点泄漏，流星单颗完�
   assert.ok(result.maxStrength - result.minStrength > 0.7);
   assert.ok(result.meteors.length >= 12 && result.meteors.length <= 25);
   assert.ok(new Set(result.meteors.map(m => m.duration.toFixed(2))).size > 5);
-  assert.equal(result.bursts, 0);
 });
 
 test('长时间切到后台不会快进或一次补发大量落物', () => {
