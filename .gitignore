@@ -4,3 +4,6 @@
 /releases/
 .DS_Store
 *.log
+
+# 交付成片不入库
+/交付文件/
